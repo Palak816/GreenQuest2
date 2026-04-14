@@ -13,7 +13,7 @@ export default function AdminPanel() {
   const fetchMetrics = async () => {
       try {
           const token = localStorage.getItem('greenquest_token');
-          const res = await axios.get('http://localhost:5000/api/admin/metrics', {
+          const res = await axios.get('https://palak-project-1.onrender.com/api/admin/metrics', {
               headers: { Authorization: `Bearer ${token}` }
           });
           setMetrics(res.data);
