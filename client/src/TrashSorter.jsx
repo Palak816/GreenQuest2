@@ -1,197 +1,199 @@
-import React, { useEffect, useRef, useState } from 'react'
-import Phaser from 'phaser'
-import { useUser } from './UserContext'
+﻿import React, { useEffect, useRef, useState } from 'react';
+import Phaser from 'phaser';
+import { useUser } from './UserContext';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Heart, Trophy, Zap, RefreshCw, AlertCircle, Award } from 'lucide-react';
+import axios from 'axios';
 
 export default function TrashSorter() {
-  const gameRef = useRef(null)
-  const { addPoints, addBadge } = useUser()
-  const [gameState, setGameState] = useState('playing') // playing, won, lost
-  const [stats, setStats] = useState({ score: 0, lives: 3, level: 1 })
+  const gameRef = useRef(null);
+  const { addPoints } = useUser();
+  const [gameState, setGameState] = useState('playing'); 
+  const [stats, setStats] = useState({ score: 0, lives: 3, level: 1 });
   
-  // Refs to access latest state/props inside Phaser
-  const statsRef = useRef(stats)
-  statsRef.current = stats
-  const gameStateRef = useRef(gameState)
-  gameStateRef.current = gameState
-  const addPointsRef = useRef(addPoints)
-  addPointsRef.current = addPoints
-  const addBadgeRef = useRef(addBadge)
-  addBadgeRef.current = addBadge
-  const setGameStateRef = useRef(setGameState)
-  setGameStateRef.current = setGameState
-  const setStatsRef = useRef(setStats)
-  setStatsRef.current = setStats
+  const statsRef = useRef(stats);
+  statsRef.current = stats;
+  const gameStateRef = useRef(gameState);
+  gameStateRef.current = gameState;
+  const startTime = useRef(Date.now());
 
   useEffect(() => {
     const config = {
       type: Phaser.AUTO,
       width: 800,
-      height: 600,
+      height: 500,
       parent: 'trash-sorter-game',
+      transparent: true,
       physics: {
         default: 'arcade',
-        arcade: {
-          gravity: { y: 300 },
-          debug: false
-        }
+        arcade: { gravity: { y: 300 }, debug: false }
       },
-      scene: {
-        preload: preload,
-        create: create,
-        update: update
-      }
-    }
+      scene: { preload, create, update }
+    };
 
-    let player
-    let cursors
-    let trashItems
-    let scoreText
-    let livesText
-    let levelText
-    let gameInstance
+    let player, cursors, trashItems;
 
     function preload() {
-      this.load.image('sky', 'https://labs.phaser.io/assets/skies/space3.png')
-      this.load.image('ground', 'https://labs.phaser.io/assets/sprites/platform.png')
-      this.load.image('trash', 'https://labs.phaser.io/assets/particles/red.png')
-      this.load.image('bin', 'assets/sprites/dustbin.svg')
+      this.load.image('ground', 'https://labs.phaser.io/assets/sprites/platform.png');
+      this.load.image('trash', 'https://labs.phaser.io/assets/particles/red.png');
+      this.load.image('bin', 'assets/sprites/dustbin.svg');
     }
 
     function create() {
-      this.add.image(400, 300, 'sky')
+      const platforms = this.physics.add.staticGroup();
+      platforms.create(400, 480, 'ground').setScale(2).refreshBody();
 
-      const platforms = this.physics.add.staticGroup()
-      platforms.create(400, 568, 'ground').setScale(2).refreshBody()
+      player = this.physics.add.sprite(400, 420, 'bin').setScale(0.8);
+      player.setCollideWorldBounds(true);
 
-      player = this.physics.add.sprite(400, 450, 'bin').setScale(0.8)
-      player.setCollideWorldBounds(true)
+      trashItems = this.physics.add.group();
+      spawnTrash.call(this);
 
-      trashItems = this.physics.add.group({
-        key: 'trash',
-        repeat: 2, // Start with fewer items
-        setXY: { x: 100, y: 0, stepX: 200 }
-      })
+      this.physics.add.collider(player, platforms);
+      this.physics.add.overlap(player, trashItems, collectTrash, null, this);
+      cursors = this.input.keyboard.createCursorKeys();
+      
+      this.time.addEvent({ delay: 2000, callback: spawnTrash, callbackScope: this, loop: true });
+    }
 
-      trashItems.children.iterate(function (child) {
-        child.setBounceY(Phaser.Math.FloatBetween(0.4, 0.8))
-        resetTrash(child)
-      })
-
-      this.physics.add.collider(player, platforms)
-      this.physics.add.collider(trashItems, platforms)
-
-      this.physics.add.overlap(player, trashItems, collectTrash, null, this)
-
-      cursors = this.input.keyboard.createCursorKeys()
-
-      scoreText = this.add.text(16, 16, 'Score: 0', { fontSize: '32px', fill: '#fff' })
-      livesText = this.add.text(16, 50, 'Lives: 3', { fontSize: '32px', fill: '#fff' })
-      levelText = this.add.text(600, 16, 'Level: 1', { fontSize: '32px', fill: '#fff' })
+    function spawnTrash() {
+      if (gameStateRef.current !== 'playing') return;
+      const x = Phaser.Math.Between(50, 750);
+      const trash = trashItems.create(x, 0, 'trash');
+      trash.setBounceY(0.4);
+      
+      // ADAPTIVE DIFFICULTY: Speed scales with current score
+      const adaptiveSpeed = 150 + (statsRef.current.score * 2);
+      trash.setVelocityY(adaptiveSpeed);
     }
 
     function update() {
       if (gameStateRef.current !== 'playing') {
-        this.physics.pause()
-        return
+        this.physics.pause();
+        return;
       }
 
-      if (cursors.left.isDown) {
-        player.setVelocityX(-300)
-      } else if (cursors.right.isDown) {
-        player.setVelocityX(300)
-      } else {
-        player.setVelocityX(0)
-      }
+      if (cursors.left.isDown) player.setVelocityX(-400);
+      else if (cursors.right.isDown) player.setVelocityX(400);
+      else player.setVelocityX(0);
 
-      trashItems.children.iterate(function (child) {
-        if (child.body.touching.down && child.y > 500) {
-           // Trash hit the ground - lose a life
-           loseLife()
-           resetTrash(child)
+      trashItems.children.iterate((child) => {
+        if (child && child.y > 450) {
+          loseLife();
+          child.destroy();
         }
-      })
+      });
     }
 
-    function resetTrash(trash) {
-      trash.y = 0
-      trash.x = Phaser.Math.Between(50, 750)
+    function collectTrash(p, t) {
+      t.destroy();
+      const newScore = statsRef.current.score + 10;
+      const newLevel = Math.floor(newScore / 100) + 1;
+      setStatsRef(prev => ({ ...prev, score: newScore, level: newLevel }));
       
-      // Speed increases with level
-      const baseSpeed = 50
-      const levelMultiplier = statsRef.current.level * 50
-      trash.setVelocityY(Phaser.Math.Between(baseSpeed + levelMultiplier, baseSpeed + levelMultiplier + 100))
-    }
-
-    function collectTrash(player, trash) {
-      resetTrash(trash)
-      
-      const newScore = statsRef.current.score + 10
-      const newLevel = Math.floor(newScore / 50) + 1
-      
-      setStatsRef.current(prev => ({ ...prev, score: newScore, level: newLevel }))
-      
-      scoreText.setText('Score: ' + newScore)
-      levelText.setText('Level: ' + newLevel)
-
-      // Update global user points
-      addPointsRef.current(10)
-
-      if (newScore >= 100) {
-        setGameStateRef.current('won')
-        addBadgeRef.current('Recycle Hero')
-      }
+      if (newScore >= 200) finishGame('won', newScore);
     }
 
     function loseLife() {
-      const newLives = statsRef.current.lives - 1
-      setStatsRef.current(prev => ({ ...prev, lives: newLives }))
-      livesText.setText('Lives: ' + newLives)
+      const newLives = statsRef.current.lives - 1;
+      setStatsRef(prev => ({ ...prev, lives: newLives }));
+      if (newLives <= 0) finishGame('lost', statsRef.current.score);
+    }
 
-      if (newLives <= 0) {
-        setGameStateRef.current('lost')
+    const setStatsRef = (fn) => setStats(fn);
+
+    const finishGame = async (status, finalScore) => {
+      setGameState(status);
+      const timeTaken = (Date.now() - startTime.current) / 1000;
+      
+      try {
+        const token = localStorage.getItem('greenquest_token');
+        await axios.post('http://localhost:5000/api/telemetry/log', {
+          activityType: 'game',
+          activityId: 'trash_sorter_pro',
+          score: finalScore,
+          timeSpent: timeTaken,
+          errorsCount: 3 - statsRef.current.lives
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        addPoints(finalScore);
+      } catch (err) {
+        console.error("Telemetry failed", err);
       }
-    }
+    };
 
-    gameInstance = new Phaser.Game(config)
-
-    return () => {
-      gameInstance.destroy(true)
-    }
-  }, []) // Empty dependency array to run once on mount
-
-  // Restart handler
-  const handleRestart = () => {
-    setStats({ score: 0, lives: 3, level: 1 })
-    setGameState('playing')
-    // Force component re-mount to restart Phaser
-    window.location.reload() // Simple way to restart for now, or we could key the component
-  }
+    const gameInstance = new Phaser.Game(config);
+    return () => gameInstance.destroy(true);
+  }, []);
 
   return (
-    <div className="flex flex-col items-center relative">
-      <h2 className="text-2xl font-bold mb-2">Trash Sorter</h2>
+    <div className="flex flex-col items-center space-y-6">
+      <div className="w-full max-w-4xl flex justify-between items-center glass-card p-4">
+         <div className="flex items-center space-x-6">
+            <div className="flex items-center text-green-800 font-bold">
+               <Trophy className="mr-2 text-yellow-500" size={20} /> Score: {stats.score}
+            </div>
+            <div className="flex items-center text-blue-800 font-bold">
+               <Zap className="mr-2 text-blue-500" size={20} /> Level: {stats.level}
+            </div>
+         </div>
+         <div className="flex items-center space-x-1">
+            {[...Array(3)].map((_, i) => (
+               <Heart key={i} size={20} className={i < stats.lives ? 'text-red-500 fill-red-500' : 'text-gray-300'} />
+            ))}
+         </div>
+      </div>
+
+      <div className="relative rounded-3xl overflow-hidden shadow-2xl border-8 border-white/20">
+        <div id="trash-sorter-game" className="bg-gradient-to-b from-blue-100 to-green-100"></div>
+        
+        <AnimatePresence>
+          {gameState !== 'playing' && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center p-6 z-20"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                className="glass-card p-10 text-center max-w-sm"
+              >
+                {gameState === 'won' ? (
+                  <>
+                    <Award className="mx-auto text-yellow-500 mb-4" size={64} />
+                    <h2 className="text-3xl font-black text-green-900 mb-2">Ecological Victory!</h2>
+                    <p className="text-green-700 mb-6">You've successfully mitigated the waste crisis for this sector.</p>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="mx-auto text-red-500 mb-4" size={64} />
+                    <h2 className="text-3xl font-black text-red-900 mb-2">Sector Breach</h2>
+                    <p className="text-red-700 mb-6">Critical waste levels reached. Strategic retreat advised.</p>
+                  </>
+                )}
+                
+                <div className="bg-white/40 p-4 rounded-2xl mb-6">
+                   <p className="text-xs font-bold text-green-800 tracking-widest uppercase">Performance Points</p>
+                   <p className="text-3xl font-black text-green-900">+{stats.score}</p>
+                </div>
+
+                <button 
+                  onClick={() => window.location.reload()}
+                  className="w-full btn-primary text-white py-3 rounded-xl font-bold flex items-center justify-center"
+                >
+                  <RefreshCw className="mr-2" size={18} /> Re-initialize Sector
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
       
-      {gameState === 'playing' && (
-        <p className="mb-4">Catch the trash! Don't let it hit the ground.</p>
-      )}
-
-      {gameState === 'won' && (
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white p-8 rounded-xl shadow-2xl z-10 text-center border-4 border-green-500">
-          <h2 className="text-4xl font-bold text-green-600 mb-4">You Won!</h2>
-          <p className="text-xl mb-6">You collected 100 points and saved the planet!</p>
-          <button onClick={() => window.location.reload()} className="bg-green-600 text-white px-8 py-3 rounded-full font-bold text-lg hover:bg-green-700">Play Again</button>
-        </div>
-      )}
-
-      {gameState === 'lost' && (
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white p-8 rounded-xl shadow-2xl z-10 text-center border-4 border-red-500">
-          <h2 className="text-4xl font-bold text-red-600 mb-4">Game Over</h2>
-          <p className="text-xl mb-6">You ran out of lives!</p>
-          <button onClick={() => window.location.reload()} className="bg-red-600 text-white px-8 py-3 rounded-full font-bold text-lg hover:bg-red-700">Try Again</button>
-        </div>
-      )}
-
-      <div id="trash-sorter-game"></div>
+      <p className="text-green-800/60 text-xs font-medium uppercase tracking-widest">
+        Reactive HUD Interface • Real-time Telemetry Active
+      </p>
     </div>
-  )
+  );
 }
